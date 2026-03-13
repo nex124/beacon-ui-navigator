@@ -15,6 +15,7 @@ jspm_packages/
 dist/
 dist-ssr/
 *.tsbuildinfo
+.firebase/
 
 # Environment variables
 .env
