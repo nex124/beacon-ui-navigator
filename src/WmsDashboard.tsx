@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useGeminiLive } from "./useGeminiLive";
 
 interface InventoryItem {
@@ -12,6 +12,38 @@ interface InventoryItem {
 export const WmsDashboard = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const { startSession, isConnected, volume, status } = useGeminiLive();
+
+  // Cooldown: disable the Start button for 10s after a session ends
+  // so old WebSocket close events have time to fully settle.
+  const [cooldown, setCooldown] = useState(0);
+  const cooldownRef = useRef<number | null>(null);
+  const wasConnected = useRef(false);
+
+  useEffect(() => {
+    if (isConnected) {
+      wasConnected.current = true;
+      return;
+    }
+    // Only start cooldown when transitioning from connected → disconnected
+    if (wasConnected.current) {
+      wasConnected.current = false;
+      setCooldown(60);
+    }
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    cooldownRef.current = window.setInterval(() => {
+      setCooldown((c) => {
+        if (c <= 1) {
+          clearInterval(cooldownRef.current!);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(cooldownRef.current!);
+  }, [cooldown > 0]);
 
   // 1. Dynamic Inventory State
   const [inventoryData, setInventoryData] = useState<InventoryItem[]>([
@@ -267,11 +299,13 @@ export const WmsDashboard = () => {
 
               <button
                 onClick={() => startSession(videoRef.current!)}
-                disabled={isConnected}
+                disabled={isConnected || cooldown > 0}
                 className={`w-full font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 shadow-md ${
                   isConnected
                     ? "bg-green-400 text-green-900 cursor-default"
-                    : "bg-white text-blue-600 hover:bg-blue-50"
+                    : cooldown > 0
+                      ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                      : "bg-white text-blue-600 hover:bg-blue-50"
                 }`}
               >
                 {isConnected ? (
@@ -282,10 +316,19 @@ export const WmsDashboard = () => {
                     </span>
                     Beacon is Active
                   </>
+                ) : cooldown > 0 ? (
+                  `Reconnect in ${cooldown}s...`
                 ) : (
                   "Start Live Walkthrough"
                 )}
               </button>
+
+              {/* Rate limit note — only shown during cooldown */}
+              {cooldown > 0 && (
+                <p className="text-blue-200 text-xs text-center mt-2 leading-relaxed">
+                  ⏳ API rate limit — please wait ~1 min before reconnecting.
+                </p>
+              )}
             </div>
           </div>
 

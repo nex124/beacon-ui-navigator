@@ -21,11 +21,21 @@ export const useGeminiLive = () => {
 
   const stopSession = useCallback(() => {
     if (visionIntervalRef.current) clearInterval(visionIntervalRef.current);
+    visionIntervalRef.current = null;
     processorRef.current?.disconnect();
+    processorRef.current = null;
     if (audioContextRef.current?.state !== "closed")
       audioContextRef.current?.close();
-    socketRef.current?.close();
+    audioContextRef.current = null;
+    // Null the ref BEFORE closing so the onclose guard correctly detects
+    // this socket is no longer current, preventing a re-entrant stopSession call.
+    const socketToClose = socketRef.current;
+    socketRef.current = null;
+    socketToClose?.close();
     streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    activeSourcesRef.current = [];
+    nextStreamTimeRef.current = 0;
     setIsConnected(false);
     setStatus("idle");
     console.log("Session stopped. 🛑");
@@ -240,8 +250,6 @@ export const useGeminiLive = () => {
                 ],
                 generation_config: {
                   response_modalities: ["AUDIO"],
-                  // Keep candidate_count at 1 for speed
-                  candidate_count: 1,
                 },
                 system_instruction: {
                   parts: [
@@ -372,13 +380,17 @@ export const useGeminiLive = () => {
         };
 
         ws.onclose = (event) => {
-          // This will tell you exactly why it closed
           console.error("WebSocket closed:", {
             code: event.code,
             reason: event.reason,
             wasClean: event.wasClean,
           });
-          stopSession();
+          // Guard: only stop if this is still the active socket.
+          // Without this, the old socket's delayed onclose fires after a new
+          // session has already started, killing the new session's refs.
+          if (socketRef.current === ws) {
+            stopSession();
+          }
         };
       } catch (err) {
         console.error("WebSocket closed:", {
